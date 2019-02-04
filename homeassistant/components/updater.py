@@ -4,28 +4,26 @@ Support to check for available updates.
 For more details about this component, please refer to the documentation at
 https://home-assistant.io/components/updater/
 """
-# pylint: disable=no-name-in-module, import-error
 import asyncio
 from datetime import timedelta
+# pylint: disable=import-error,no-name-in-module
 from distutils.version import StrictVersion
 import json
 import logging
-import os
-import platform
 import uuid
 
 import aiohttp
 import async_timeout
 import voluptuous as vol
 
-from homeassistant.const import ATTR_FRIENDLY_NAME
-from homeassistant.const import __version__ as current_version
+from homeassistant.const import (
+    ATTR_FRIENDLY_NAME, __version__ as current_version)
 from homeassistant.helpers import event
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
 import homeassistant.util.dt as dt_util
 
-REQUIREMENTS = ['distro==1.2.0']
+REQUIREMENTS = ['distro==1.3.0']
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,25 +70,23 @@ def _load_uuid(hass, filename=UPDATER_UUID_FILE):
         return _create_uuid(hass, filename)
 
 
-@asyncio.coroutine
-def async_setup(hass, config):
+async def async_setup(hass, config):
     """Set up the updater component."""
     if 'dev' in current_version:
         # This component only makes sense in release versions
-        _LOGGER.warning("Running on 'dev', only analytics will be submitted")
+        _LOGGER.info("Running on 'dev', only analytics will be submitted")
 
     config = config.get(DOMAIN, {})
     if config.get(CONF_REPORTING):
-        huuid = yield from hass.async_add_job(_load_uuid, hass)
+        huuid = await hass.async_add_job(_load_uuid, hass)
     else:
         huuid = None
 
     include_components = config.get(CONF_COMPONENT_REPORTING)
 
-    @asyncio.coroutine
-    def check_new_version(now):
+    async def check_new_version(now):
         """Check if a new version is available and report if one is."""
-        result = yield from get_newest_version(hass, huuid, include_components)
+        result = await get_newest_version(hass, huuid, include_components)
 
         if result is None:
             return
@@ -125,46 +121,22 @@ def async_setup(hass, config):
     return True
 
 
-@asyncio.coroutine
-def get_system_info(hass, include_components):
-    """Return info about the system."""
-    info_object = {
-        'arch': platform.machine(),
-        'dev': 'dev' in current_version,
-        'docker': False,
-        'os_name': platform.system(),
-        'python_version': platform.python_version(),
-        'timezone': dt_util.DEFAULT_TIME_ZONE.zone,
-        'version': current_version,
-        'virtualenv': os.environ.get('VIRTUAL_ENV') is not None,
-        'hassio': hass.components.hassio.is_hassio(),
-    }
+async def get_newest_version(hass, huuid, include_components):
+    """Get the newest Home Assistant version."""
+    if huuid:
+        info_object = \
+            await hass.helpers.system_info.async_get_system_info()
 
-    if include_components:
-        info_object['components'] = list(hass.config.components)
+        if include_components:
+            info_object['components'] = list(hass.config.components)
 
-    if platform.system() == 'Windows':
-        info_object['os_version'] = platform.win32_ver()[0]
-    elif platform.system() == 'Darwin':
-        info_object['os_version'] = platform.mac_ver()[0]
-    elif platform.system() == 'FreeBSD':
-        info_object['os_version'] = platform.release()
-    elif platform.system() == 'Linux':
         import distro
-        linux_dist = yield from hass.async_add_job(
+
+        linux_dist = await hass.async_add_executor_job(
             distro.linux_distribution, False)
         info_object['distribution'] = linux_dist[0]
         info_object['os_version'] = linux_dist[1]
-        info_object['docker'] = os.path.isfile('/.dockerenv')
 
-    return info_object
-
-
-@asyncio.coroutine
-def get_newest_version(hass, huuid, include_components):
-    """Get the newest Home Assistant version."""
-    if huuid:
-        info_object = yield from get_system_info(hass, include_components)
         info_object['huuid'] = huuid
     else:
         info_object = {}
@@ -172,7 +144,7 @@ def get_newest_version(hass, huuid, include_components):
     session = async_get_clientsession(hass)
     try:
         with async_timeout.timeout(5, loop=hass.loop):
-            req = yield from session.post(UPDATER_URL, json=info_object)
+            req = await session.post(UPDATER_URL, json=info_object)
         _LOGGER.info(("Submitted analytics to Home Assistant servers. "
                       "Information submitted includes %s"), info_object)
     except (asyncio.TimeoutError, aiohttp.ClientError):
@@ -181,7 +153,7 @@ def get_newest_version(hass, huuid, include_components):
         return None
 
     try:
-        res = yield from req.json()
+        res = await req.json()
     except ValueError:
         _LOGGER.error("Received invalid JSON from Home Assistant Update")
         return None

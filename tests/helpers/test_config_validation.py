@@ -10,8 +10,6 @@ import voluptuous as vol
 
 import homeassistant.helpers.config_validation as cv
 
-from tests.common import get_test_home_assistant
-
 
 def test_boolean():
     """Test boolean validation."""
@@ -256,33 +254,16 @@ def test_event_schema():
         cv.EVENT_SCHEMA(value)
 
 
-def test_platform_validator():
-    """Test platform validation."""
-    hass = None
-
-    try:
-        hass = get_test_home_assistant()
-
-        schema = vol.Schema(cv.platform_validator('light'))
-
-        with pytest.raises(vol.MultipleInvalid):
-            schema('platform_that_does_not_exist')
-
-        schema('hue')
-    finally:
-        if hass is not None:
-            hass.stop()
-
-
 def test_icon():
     """Test icon validation."""
     schema = vol.Schema(cv.icon)
 
-    for value in (False, 'work', 'icon:work'):
+    for value in (False, 'work'):
         with pytest.raises(vol.MultipleInvalid):
             schema(value)
 
     schema('mdi:work')
+    schema('custom:prefix')
 
 
 def test_time_period():
@@ -352,6 +333,10 @@ def test_service_schema():
             'entity_id': 'light.kitchen',
         },
         {
+            'service': 'light.turn_on',
+            'entity_id': 'all',
+        },
+        {
             'service': 'homeassistant.turn_on',
             'entity_id': ['light.kitchen', 'light.ceiling'],
         },
@@ -376,8 +361,14 @@ def test_string():
     """Test string validation."""
     schema = vol.Schema(cv.string)
 
-    with pytest.raises(vol.MultipleInvalid):
+    with pytest.raises(vol.Invalid):
         schema(None)
+
+    with pytest.raises(vol.Invalid):
+        schema([])
+
+    with pytest.raises(vol.Invalid):
+        schema({})
 
     for value in (True, 1, 'hello'):
         schema(value)
@@ -543,21 +534,6 @@ def test_has_at_least_one_key():
         schema(value)
 
 
-def test_has_at_least_one_key_value():
-    """Test has_at_least_one_key_value validator."""
-    schema = vol.Schema(cv.has_at_least_one_key_value(('drink', 'beer'),
-                                                      ('drink', 'soda'),
-                                                      ('food', 'maultaschen')))
-
-    for value in (None, [], {}, {'wine': None}, {'drink': 'water'}):
-        with pytest.raises(vol.MultipleInvalid):
-            schema(value)
-
-    for value in ({'drink': 'beer'}, {'food': 'maultaschen'},
-                  {'drink': 'soda', 'food': 'maultaschen'}):
-        schema(value)
-
-
 def test_enum():
     """Test enum validator."""
     class TestEnum(enum.Enum):
@@ -585,3 +561,72 @@ def test_socket_timeout():  # pylint: disable=invalid-name
     assert _GLOBAL_DEFAULT_TIMEOUT == schema(None)
 
     assert schema(1) == 1.0
+
+
+def test_matches_regex():
+    """Test matches_regex validator."""
+    schema = vol.Schema(cv.matches_regex('.*uiae.*'))
+
+    with pytest.raises(vol.Invalid):
+        schema(1.0)
+
+    with pytest.raises(vol.Invalid):
+        schema("  nrtd   ")
+
+    test_str = "This is a test including uiae."
+    assert(schema(test_str) == test_str)
+
+
+def test_is_regex():
+    """Test the is_regex validator."""
+    schema = vol.Schema(cv.is_regex)
+
+    with pytest.raises(vol.Invalid):
+        schema("(")
+
+    with pytest.raises(vol.Invalid):
+        schema({"a dict": "is not a regex"})
+
+    valid_re = ".*"
+    schema(valid_re)
+
+
+def test_comp_entity_ids():
+    """Test config validation for component entity IDs."""
+    schema = vol.Schema(cv.comp_entity_ids)
+
+    for valid in ('ALL', 'all', 'AlL', 'light.kitchen', ['light.kitchen'],
+                  ['light.kitchen', 'light.ceiling'], []):
+        schema(valid)
+
+    for invalid in (['light.kitchen', 'not-entity-id'], '*', ''):
+        with pytest.raises(vol.Invalid):
+            schema(invalid)
+
+
+def test_schema_with_slug_keys_allows_old_slugs(caplog):
+    """Test schema with slug keys allowing old slugs."""
+    schema = cv.schema_with_slug_keys(str)
+
+    with patch.dict(cv.INVALID_SLUGS_FOUND, clear=True):
+        for value in ('_world', 'wow__yeah'):
+            caplog.clear()
+            # Will raise if not allowing old slugs
+            schema({value: 'yo'})
+            assert "Found invalid slug {}".format(value) in caplog.text
+
+        assert len(cv.INVALID_SLUGS_FOUND) == 2
+
+
+def test_entity_id_allow_old_validation(caplog):
+    """Test schema allowing old entity_ids."""
+    schema = vol.Schema(cv.entity_id)
+
+    with patch.dict(cv.INVALID_ENTITY_IDS_FOUND, clear=True):
+        for value in ('hello.__world', 'great.wow__yeah'):
+            caplog.clear()
+            # Will raise if not allowing old entity ID
+            schema(value)
+            assert "Found invalid entity_id {}".format(value) in caplog.text
+
+        assert len(cv.INVALID_ENTITY_IDS_FOUND) == 2
